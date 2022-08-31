@@ -1,0 +1,1 @@
+-nut -i4 -ci4 -lp -ip0 -nbad -bap -nbc -bbo -hnl -bl -bli0 -brs -c33 -cd33 -ncdb -nce -cli0 -d0 -di10 -nfc1 -npcs -prs -npsl -prs -ncs -nsc -sob -nfca -cp33 -ss -ts8 -il1 -nbfda -psl -slc -brf
