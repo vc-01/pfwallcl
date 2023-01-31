@@ -1,7 +1,7 @@
-/* 
- * Copyright (c) 2022 Vladimir Chren
+/*
+ * Copyright (c) 2022-2023 Vladimir Chren
  * All rights reserved.
- * 
+ *
  * SPDX-License-Identifier: MIT
  */
 
@@ -11,89 +11,149 @@
 #include "pfbios.h"
 #include "common.h"
 
-#ifdef __cplusplus
-	#define __CPPARGS ...
-#else
-	#define __CPPARGS
+#ifdef NTVDM
+#include <iostream.h>
+#include <dos.h>
 #endif
+
+#ifdef __cplusplus
+    #define __CPPARGS ...
+#else
+    #define __CPPARGS
+#endif
+
+class INIFile;
 
 class Timer
 {
+public:
+    class DaytimeHHMM
+    {
+        byte_t hour;
+        byte_t min;
+        unsigned int abs_min;
+
+    public:
+        DaytimeHHMM(unsigned int, unsigned int = 0);
+
+        unsigned int
+            set(DaytimeHHMM const & const);
+        unsigned int
+            set(unsigned int, unsigned int = 0);
+        unsigned int
+            get_hour() const;
+        unsigned int
+            get_min() const;
+        unsigned int
+            get_abs_min() const;
+
+        unsigned int
+            operator < (DaytimeHHMM const & const) const;
+        unsigned int
+            operator > (DaytimeHHMM const & const) const;
+        unsigned int
+            operator >= (DaytimeHHMM const & const) const;
+        unsigned int
+            operator + (DaytimeHHMM const & const) const;
+        unsigned int
+            operator - (DaytimeHHMM const & const) const;
+#ifdef NTVDM
+        friend ostream & const
+            operator << (
+                ostream & const, DaytimeHHMM const & const);
+#endif
+    };
+
+    struct time_digits_t {
+        union {
+            struct time_digit_t {
+                byte_t hour_tens;
+                byte_t hour_ones;
+                byte_t minute_tens;
+                byte_t minute_ones;
+            } digit;
+            byte_t digit_arr[4];
+        };
+        time_digits_t();
+#ifdef NTVDM
+        friend ostream & const
+            operator << (ostream & const, time_digits_t const & const);
+#endif
+    };
+
+    struct timer_events_t {
+        unsigned int passed_10minutes : 1;
+        unsigned int passed_halfanhour : 1;
+        unsigned int passed_fullhour : 1;
+    };
+
 private:
-	PFBios::clockspeed_t & const
-		clockspeed;
+    struct internal_state_t
+    {
+        unsigned int passed_1minute : 1;
+        unsigned int poweroff_now : 1;
+        char last_minute_tens;
+        unsigned int poweroff_delay_override;
+        unsigned long poweroff_ticks;
+    };
 
-	void
-		set_poweroff_ticks(unsigned int);
-	static void
-		dec_poweroff_ticks();
-	void
-		set_poweroff_delay_default(void);
-	int
-		get_poweroff_delay_kbhit_ticks(void);
+    static struct internal_state_t internal_state;
 
-	void interrupt
-		(* int1c_handler_orig_fp)(__CPPARGS);
-	void interrupt
-		(* int4a_handler_orig_fp)(__CPPARGS);
-	static void
-		interrupt int1c_handler(__CPPARGS);
-	static void
-		interrupt int4a_handler(__CPPARGS);
+    PFBios::clockspeed_t const & const
+        clockspeed;
+
+    void
+        set_poweroff_delay_minutes(unsigned int);
+    void
+        set_poweroff_ticks(unsigned long);
+    void interrupt
+        (* int1c_handler_orig_fp)(__CPPARGS);
+    void interrupt
+        (* int4a_handler_orig_fp)(__CPPARGS);
+    static void
+        interrupt int1c_handler(__CPPARGS);
+    static void
+        interrupt int4a_handler(__CPPARGS);
+    void
+        register_handler_int1c(void);
+    void
+        register_handler_int4a(void);
+    void
+        deregister_handler_int1c(void);
+    void
+        deregister_handler_int4a(void);
 
 public:
-	struct time_digits_t {
-		union {
-			struct time_digit_t {
-				byte_t hour_tens;
-				byte_t hour_ones;
-				byte_t minute_tens;
-				byte_t minute_ones;
-			} digit;
-			byte_t digit_arr[4];
-		};
-	};
-
-	struct timer_events_t
-	{
-		unsigned int passed_1minute : 1;
-		unsigned int passed_10minutes : 1;
-		unsigned int passed_halfanhour : 1;
-		unsigned int passed_fullhour : 1;
-		unsigned int poweroff : 1;
-	};
-
-	Timer(
-		PFBios::clockspeed_t & const,
-		struct time_digits_t const & const);
-	~Timer();
-
-	void
-		set_clockspeed_normal(void);
-	void
-		set_clockspeed_fast(void);
-	void
-		set_poweroff_delay_minutes(unsigned int);
-	void
-		set_poweroff_delay_kbhit(void);
-	void
-		set_poweroff_delay_minkbhit(void);
-	struct Timer::timer_events_t
-		eval_events(struct time_digits_t const & const time_digits);
-	unsigned int
-		get_reset_poweroff_event(void);
-	unsigned int
-		get_reset_passed1minute_event(void);
-	struct timer_events_t
-		get_events(void);
-	void
-		time_events_reset(void);
-};
-
-#ifdef NTVDM
-#include <iostream.h>
-	ostream & const
-		operator<< (ostream & const, Timer::time_digits_t const & const);
+    Timer(
+        PFBios::clockspeed_t & const);
+    void
+        register_handlers(void);
+    void
+        deregister_handlers(void);
+    struct Timer::timer_events_t
+        eval_events(struct time_digits_t const & const);
+    unsigned int
+        receive_passed1minute_event(void);
+    unsigned int
+        receive_poweroff_event(void);
+    void
+        reset_events(void);
+    void
+        set_poweroff_delay_override(Timer::DaytimeHHMM const & const);
+    void
+        unset_poweroff_delay_override();
+    void
+        schedule_next_poweroff(
+            INIFile const * const);
+#ifdef TESTS
+    unsigned int
+        test_poweroff_delay(
+            struct dostime_t * const,
+            INIFile const * const,
+            unsigned int);
+    void
+        test_schedule_next_poweroff(void);
 #endif
+};
 
 #endif

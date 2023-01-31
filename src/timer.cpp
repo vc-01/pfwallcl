@@ -1,208 +1,331 @@
-/* 
- * Copyright (c) 2022 Vladimir Chren
+/*
+ * Copyright (c) 2022-2023 Vladimir Chren
  * All rights reserved.
- * 
+ *
  * SPDX-License-Identifier: MIT
  */
 
-#include <dos.h>
-
 #include "timer.h"
+#include "inifile.h"
 
-#define ONKBHIT_POWEROFF_MINUTES 4
-#define CF 1
+#include <dos.h>
+#include <mem.h>
+#include <limits.h>
+#include <assert.h>
 
-struct internal_state_t
+struct Timer::internal_state_t
+    Timer::internal_state =
+        { FALSE, FALSE, -1, 0, 0 };
+
+Timer::time_digits_t::time_digits_t()
 {
-	int minute_tens_last;
-	int poweroff_ticks;
-} internal_state = { -1, 0 };
-
-struct Timer::timer_events_t timer_events =
-	{ FALSE, FALSE, FALSE, FALSE, FALSE };
+    memset(digit_arr, -1, sizeof digit_arr);
+}
 
 Timer::Timer(
-	PFBios::clockspeed_t & const clockspeed,
-	struct time_digits_t const & const time_digits) :
-	clockspeed (clockspeed)
+    PFBios::clockspeed_t & const clockspeed) :
+    clockspeed (clockspeed),
+    int1c_handler_orig_fp(NULL),
+    int4a_handler_orig_fp(NULL)
 {
-	set_poweroff_delay_kbhit();	// set default power-off timeout
+}
 
-	eval_events(time_digits);		// force the evaluation now
-									// with that, prepare the initial state
-
-	int1c_handler_orig_fp = getvect (0x1c);
+void Timer::register_handler_int1c(void)
+{
 #ifndef NTVDM
-	setvect (0x1c, & Timer::int1c_handler);
+    int1c_handler_orig_fp = getvect (0x1c);
+    setvect (0x1c, & Timer::int1c_handler);
 #endif
-	int4a_handler_orig_fp = getvect (0x4a);
-	setvect (0x4a, & Timer::int4a_handler);
 }
 
-Timer::~Timer(void)
+void Timer::register_handler_int4a(void)
 {
-	setvect (0x1c, int1c_handler_orig_fp);
-	setvect (0x4a, int4a_handler_orig_fp);
+    int4a_handler_orig_fp = getvect (0x4a);
+    setvect (0x4a, & Timer::int4a_handler);
 }
 
-void Timer::set_clockspeed_normal(void)
+void Timer::deregister_handler_int1c(void)
 {
-	set_poweroff_ticks(internal_state.poweroff_ticks / 120);
-}
-void Timer::set_clockspeed_fast(void)
-{
-	set_poweroff_ticks(internal_state.poweroff_ticks * 120);
+    if (int1c_handler_orig_fp)
+        setvect (0x1c, int1c_handler_orig_fp);
 }
 
-void Timer::set_poweroff_ticks(unsigned int poweroff_ticks)
+void Timer::deregister_handler_int4a(void)
 {
-	struct REGPACK regpack;
-	regpack.r_ax = poweroff_ticks;
-	regpack.r_bx = FP_OFF (& internal_state.poweroff_ticks);
-
-	asm {
-		push ax
-		push bx
-		mov ax, word ptr regpack.r_ax
-		mov bx, word ptr regpack.r_bx
-		lock xchg word ptr [ bx ], ax
-		pop bx
-		pop ax
-	}
-
-	timer_events.poweroff = FALSE;
+    if (int4a_handler_orig_fp)
+        setvect (0x4a, int4a_handler_orig_fp);
 }
 
-void Timer::dec_poweroff_ticks()
+void Timer::register_handlers(void)
 {
-	struct REGPACK regpack;
-	regpack.r_bx = FP_OFF (& internal_state.poweroff_ticks);
-
-	asm {
-		push bx
-		mov bx, word ptr regpack.r_bx
-		lock dec word ptr [ bx ]
-		pop bx
-	}
+    register_handler_int1c();
+    register_handler_int4a();
 }
 
-int Timer::get_poweroff_delay_kbhit_ticks()
+void Timer::deregister_handlers(void)
 {
-	if (clockspeed == PFBios::clockspeed_normal)
-	{
-		return ONKBHIT_POWEROFF_MINUTES / 2; // ONKBHIT_POWEROFF_MINUTES to 2-minute tick
-	}
-	else if (clockspeed == PFBios::clockspeed_fast)
-	{
-		return ONKBHIT_POWEROFF_MINUTES * 60; // ONKBHIT_POWEROFF_MINUTES to 1-second tick
-	}
-	return 0;
+    deregister_handler_int4a();
+    deregister_handler_int1c();
+}
+
+void Timer::set_poweroff_delay_override(
+    Timer::DaytimeHHMM const & const poweroff_delay_override_dayt)
+{
+    asm { cli };
+    internal_state.poweroff_delay_override = poweroff_delay_override_dayt.get_abs_min();
+    asm { sti };
+}
+
+void Timer::unset_poweroff_delay_override()
+{
+    asm { cli };
+    internal_state.poweroff_delay_override = 0;
+    asm { sti };
+}
+
+void Timer::schedule_next_poweroff(
+    INIFile const * const inifile)
+{
+    /*
+        What's behind the monstrous conditional below?
+        - User can specify power on at / power off at / power off delay on-keyboard-hit time(s).
+        - If either power off or power on time is crossed by khit + power off delay,
+          we're leaving from ... or landing in between power on -- power off times;
+          -> -power off at- time will be applied as defined in the .ini file,
+          kbhit power off delay won't be applied, it will apply otherwise.
+        - Either of the above-mentioned config options can be omitted by the user.
+    */
+
+    /*
+        Legend (apply below):
+        'pon'  : power on time as specified in the ini file.
+        'poff' : power off time as specified in the ini file.
+        'kbhit_poff_delay' : power off delay on keyboard hit as spec. in the ini file.
+    */
+
+    /*
+        From the priority point of view: pon = poff > kbhit_poff_delay
+    */
+
+    asm { cli };
+    if (internal_state.poweroff_delay_override)
+    {
+        set_poweroff_delay_minutes(internal_state.poweroff_delay_override);
+        asm { sti };
+        return;
+    }
+    asm { sti };
+
+    struct time
+        timep;
+
+    gettime(&timep);
+
+    Timer::DaytimeHHMM const
+        now (
+            timep.ti_hour, timep.ti_min);
+    Timer::DaytimeHHMM const & const
+        pon =
+            * inifile->pon_dayt_p;
+    Timer::DaytimeHHMM const & const
+        poff =
+            * inifile->poff_dayt_p;
+    int
+        now_poff_delay =
+            inifile->poff_dayt_p ?
+                poff - now :
+                -1;
+    int
+        now_pon_delay =
+            inifile->pon_dayt_p ?
+                pon - now :
+                -1;
+    unsigned int
+        kbhit_poff_delay =
+            inifile->kbhit_poff_delay_dayt_p ?
+                inifile->kbhit_poff_delay_dayt_p->get_abs_min() :
+                DEFAULT_POFF_DELAY_ONKBHIT_MINUTES;
+    unsigned int
+        now_poff_delay_on_kbhit =
+            now_poff_delay < MIN_POFF_DELAY_ONKBHIT_MINUTES ?
+                MIN_POFF_DELAY_ONKBHIT_MINUTES :
+                now_poff_delay;
+    unsigned int
+        kbhit_poff_delay_has_crossed_pon =
+            now_pon_delay >= 0 ?
+                kbhit_poff_delay > now_pon_delay :
+                FALSE;
+    unsigned int
+        kbhit_poff_delay_has_crossed_poff =
+            now_poff_delay > 0 ?
+                kbhit_poff_delay > now_poff_delay :
+                FALSE;
+    unsigned int
+        in_onperiod_daymode =
+            inifile->pon_dayt_p && inifile->poff_dayt_p ?
+                pon < poff && (now >= pon && now < poff) :
+                FALSE;
+    unsigned int
+        in_onperiod_nightmode =
+            inifile->pon_dayt_p && inifile->poff_dayt_p ?
+                pon > poff && (now >= pon || now < poff) :
+                FALSE;
+
+    if (kbhit_poff_delay_has_crossed_poff
+        || in_onperiod_daymode
+        || in_onperiod_nightmode
+        ) /* in- or leaving onperiod */
+        set_poweroff_delay_minutes(now_poff_delay_on_kbhit);
+    else if (kbhit_poff_delay_has_crossed_pon
+        ) /* entering on period */
+        inifile->poff_dayt_p ?
+            set_poweroff_delay_minutes(now_poff_delay_on_kbhit) :
+            set_poweroff_delay_minutes(now_pon_delay + kbhit_poff_delay);
+    else /* in offperiod */
+        set_poweroff_delay_minutes(kbhit_poff_delay);
 }
 
 void Timer::set_poweroff_delay_minutes(unsigned int minutes)
 {
-	if (clockspeed == PFBios::clockspeed_normal)
-	{
-		set_poweroff_ticks( MAX(minutes, 2u) / 2 ); // minutes to 2-minute tick
-	}
-	else if (clockspeed == PFBios::clockspeed_fast)
-	{
-		set_poweroff_ticks( MAX(minutes, 1u) * 60); // minutes to 1-second tick
-	}
+    if (clockspeed == PFBios::clockspeed_normal)
+        set_poweroff_ticks(minutes / 2u);
+
+    else if (clockspeed == PFBios::clockspeed_fast)
+        set_poweroff_ticks(minutes * 60l);
 }
 
-void Timer::set_poweroff_delay_kbhit(void)
+void Timer::set_poweroff_ticks(unsigned long poweroff_ticks)
 {
-	set_poweroff_delay_minutes(ONKBHIT_POWEROFF_MINUTES);
+    poweroff_ticks = MAX(poweroff_ticks, 1);
+#ifdef NTVDM
+    cout
+        << "Timer: Will power-off in "
+        << poweroff_ticks
+        << " ticks.\n";
+#endif
+    asm { cli; };
+    internal_state.poweroff_now = FALSE;
+    internal_state.poweroff_ticks = poweroff_ticks;
+    asm { sti; };
 }
 
-void Timer::set_poweroff_delay_minkbhit(void)
+unsigned int Timer::receive_passed1minute_event(void)
 {
-	if (internal_state.poweroff_ticks < get_poweroff_delay_kbhit_ticks())
-	{
-		set_poweroff_delay_minutes(ONKBHIT_POWEROFF_MINUTES);
-	}
+    asm { cli };
+    unsigned int passed_1minute = internal_state.passed_1minute;
+    internal_state.passed_1minute = FALSE;
+    asm { sti };
+    return passed_1minute;
 }
 
-unsigned int Timer::get_reset_poweroff_event(void)
+unsigned int Timer::receive_poweroff_event(void)
 {
-	struct timer_events_t timer_events_snapshot = timer_events;
-	timer_events.poweroff = FALSE;
-	return timer_events_snapshot.poweroff;
+    asm { cli };
+    unsigned int poweroff_now = internal_state.poweroff_now;
+    internal_state.poweroff_now = FALSE;
+    asm { sti };
+    return poweroff_now;
 }
 
-unsigned int Timer::get_reset_passed1minute_event(void)
+void
+    Timer::reset_events(void)
 {
-	struct timer_events_t timer_events_snapshot = timer_events;
-	timer_events.passed_1minute = FALSE;
-	return timer_events_snapshot.passed_1minute;
+    asm { cli };
+    internal_state.passed_1minute = FALSE;
+    internal_state.poweroff_now = FALSE;
+    internal_state.last_minute_tens = -1;
+    internal_state.poweroff_delay_override = 0;
+    internal_state.poweroff_ticks = 0;
+    asm { sti };
 }
 
 struct Timer::timer_events_t Timer::eval_events(
-	struct time_digits_t const & const time_digits)
+    struct time_digits_t const & const time_digits)
 {
-	struct Timer::timer_events_t timer_events =
-		{ TRUE, FALSE, FALSE, FALSE, FALSE };
+    struct Timer::timer_events_t timer_events =
+        { FALSE, FALSE, FALSE };
 
-	if (internal_state.minute_tens_last == -1)
-	{
-		goto no_minute_tens_last;
-	}
-	if (internal_state.minute_tens_last != time_digits.digit.minute_tens)
-	{
-		timer_events.passed_10minutes = TRUE;
-	}
-	if (internal_state.minute_tens_last < 3) // first half of an hour
-	{
-		if (time_digits.digit.minute_tens >= 3)
-		{
-			timer_events.passed_halfanhour = TRUE;
-		}
-	}
-	else // second half of an hour
-	{
-		if (time_digits.digit.minute_tens < 3)
-		{
-			timer_events.passed_halfanhour = TRUE;
-			timer_events.passed_fullhour = TRUE;
-		}
-	}
+    asm { cli };
+    if (internal_state.last_minute_tens == -1)
+    {
+        goto no_last_minute_tens;
+    }
+    if (internal_state.last_minute_tens != time_digits.digit.minute_tens)
+    {
+#ifdef NTVDM
+        cout
+            << "Timer: passed_10minutes: " << time_digits << "\n";
+#endif
+        timer_events.passed_10minutes = TRUE;
+    }
+    if (internal_state.last_minute_tens < 3) // first half of an hour
+    {
+        if (time_digits.digit.minute_tens >= 3)
+        {
+#ifdef NTVDM
+            cout
+                << "Timer: passed_halfanhour: " << time_digits << "\n";
+#endif
+            timer_events.passed_halfanhour = TRUE;
+        }
+    }
+    else // second half of an hour
+    {
+        if (time_digits.digit.minute_tens < 3)
+        {
+#ifdef NTVDM
+            cout
+                << "Timer: passed_halfanhour: " << time_digits << "\n"
+                << "Timer: passed_fullhour: " << time_digits << "\n";
+#endif
+            timer_events.passed_halfanhour = TRUE;
+            timer_events.passed_fullhour = TRUE;
+        }
+    }
 
-no_minute_tens_last:
-	internal_state.minute_tens_last =
-		time_digits.digit.minute_tens;
+no_last_minute_tens:
+    internal_state.last_minute_tens =
+        time_digits.digit.minute_tens;
+    asm { sti };
 
-	return timer_events; 	// return a copy, this is atomic,
-							// no locking required
+    return timer_events;
 }
 
-void interrupt Timer::int1c_handler(__CPPARGS)	// timer interrupt;
-												// shot every tick
+void interrupt Timer::int1c_handler(__CPPARGS)  // Timer tick int. handler;
+                                                // called by HW int. handler ->
+                                                // end of int. not yet signalled back to
+                                                // int. controller, hence it cannot
+                                                // be interrupted by another interrupt
 {
-	if (internal_state.poweroff_ticks == 0)
-		timer_events.poweroff = TRUE;
-	else
-		dec_poweroff_ticks();
+    if (internal_state.poweroff_ticks > 0)
+    {
+        if (--internal_state.poweroff_ticks == 0)
+        {
+            internal_state.last_minute_tens = -1;
+            internal_state.poweroff_delay_override = 0;
+            internal_state.poweroff_now = TRUE;
+        }
+    }
 }
 
-void interrupt Timer::int4a_handler(__CPPARGS)	// RTC alarm interrupt;
-												// shot every minute
+void interrupt Timer::int4a_handler(__CPPARGS)  // RTC alarm int. handler;
+                                                // on wake-up & passed_1minute event
 {
-	timer_events.passed_1minute = TRUE;
+    internal_state.passed_1minute = TRUE;
 }
 
 #ifdef NTVDM
-ostream & const operator<< (
-	ostream & const out,
-	Timer::time_digits_t const & const time_digits)
+ostream & const
+    operator << (ostream & const out,
+        Timer::time_digits_t const & const time_digits)
 {
-	out <<
-		(unsigned int)time_digits.digit.hour_tens <<
-		(unsigned int)time_digits.digit.hour_ones <<
-		":" <<
-		(unsigned int)time_digits.digit.minute_tens <<
-		(unsigned int)time_digits.digit.minute_ones;
+    out <<
+        (unsigned int)time_digits.digit.hour_tens <<
+        (unsigned int)time_digits.digit.hour_ones <<
+        ":" <<
+        (unsigned int)time_digits.digit.minute_tens <<
+        (unsigned int)time_digits.digit.minute_ones;
 
-	return out;
+    return out;
 }
 #endif

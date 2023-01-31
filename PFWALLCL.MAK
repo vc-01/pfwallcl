@@ -23,22 +23,28 @@ INCLUDEPATH = C:\BORLANDC\INCLUDE;SRC
 
 EXE_dependencies =  \
  fnt_dat.obj \
- dgclock.obj \
  graph.obj \
+ dgclock.obj \
+ timer.obj \
+ timer_dt.obj \
+ fixedp.obj \
+ inifile.obj \
  pfbios.obj \
- pfwallcl.obj \
- timer.obj
+ pfwallcl.obj
 
 #		*Explicit Rules*
 build\pfwallcl.exe: pfwallcl.cfg $(EXE_dependencies)
-  $(TLINK) /x/c/d/L$(LIBPATH) @&&|
+  $(TLINK) /x/c/d/s/L$(LIBPATH) @&&|
 c0s.obj+
 build\fnt_dat.obj+
-build\dgclock.obj+
 build\graph.obj+
+build\dgclock.obj+
+build\timer.obj+
+build\timer_dt.obj+
+build\fixedp.obj+
+build\inifile.obj+
 build\pfbios.obj+
-build\pfwallcl.obj+
-build\timer.obj
+build\pfwallcl.obj
 build\pfwallcl
 		# no map file
 graphics.lib+
@@ -49,29 +55,40 @@ cs.lib
 
 
 #		*Individual File Dependencies*
-fnt_dat.obj: pfwallcl.cfg src\fnt_dat.asm 
+fnt_dat.obj: pfwallcl.cfg src\fnt_dat.asm
 	$(TASM) /MX /ZI /O SRC\FNT_DAT.ASM,BUILD\FNT_DAT.OBJ
 
-dgclock.obj: pfwallcl.cfg src\dgclock.cpp 
-	$(CC) -c src\dgclock.cpp
-
-graph.obj: pfwallcl.cfg src\graph.cpp 
+graph.obj: pfwallcl.cfg src\graph.cpp
 	$(CC) -c src\graph.cpp
 
-pfbios.obj: pfwallcl.cfg src\pfbios.cpp 
+dgclock.obj: pfwallcl.cfg src\dgclock.cpp
+	$(CC) -c src\dgclock.cpp
+
+timer.obj: pfwallcl.cfg src\timer.cpp
+	$(CC) -c src\timer.cpp
+
+timer_dt.obj: pfwallcl.cfg src\timer_dt.cpp
+	$(CC) -c src\timer_dt.cpp
+
+fixedp.obj: pfwallcl.cfg src\fixedp.cpp
+	$(CC) -c src\fixedp.cpp
+
+inifile.obj: pfwallcl.cfg src\inifile.cpp
+	$(CC) -c src\inifile.cpp
+
+pfbios.obj: pfwallcl.cfg src\pfbios.cpp
 	$(CC) -c src\pfbios.cpp
 
-pfwallcl.obj: pfwallcl.cfg src\pfwallcl.cpp 
+pfwallcl.obj: pfwallcl.cfg src\pfwallcl.cpp
 	$(CC) -c src\pfwallcl.cpp
-
-timer.obj: pfwallcl.cfg src\timer.cpp 
-	$(CC) -c src\timer.cpp
 
 #		*Compiler Configuration File*
 pfwallcl.cfg: pfwallcl.mak
   copy &&|
 -a
 -G
+-1-
+-f-
 -O
 -Og
 -Oe
@@ -97,7 +114,5 @@ pfwallcl.cfg: pfwallcl.mak
 -nBUILD
 -I$(INCLUDEPATH)
 -L$(LIBPATH)
--DNTVDM_;SSHOT_
+-DNTVDM_;EMUFPU_;SSHOT_;TESTS_
 | pfwallcl.cfg
-
-
