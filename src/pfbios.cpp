@@ -50,20 +50,6 @@ char const * const
             "Clock Speed now in NORMAL mode."
             "\0";
 char const * const
-    PFBios::msg_anim_willstart =
-            "Animation Scheduled For Start"
-            "\0"
-    //   | | TEXT.TEXT.TEXT.TEXT.TEXT.TEXT.TEXT | |
-            "Will start on the next RTC alarm."
-            "\0";
-char const * const
-    PFBios::msg_anim_willstop =
-            "Animation Stopped"
-            "\0"
-    //   | | TEXT.TEXT.TEXT.TEXT.TEXT.TEXT.TEXT | |
-            "Animation only in NORMAL mode."
-            "\0";
-char const * const
     PFBios::msg_poweroff_delay_override_deact =
             "Power Off Delay"
             "\0"

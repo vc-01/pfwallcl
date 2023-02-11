@@ -223,7 +223,7 @@ int Graph::animate_finished(void)
         return anim_iter_amplmultp_finished(); // finished = TRUE or FALSE
     return FALSE; // finished = FALSE
 }
-#else // fixed point
+#else // fixed point arithmetic
 int Graph::animate_finished(void)
 {
     Fixedp animwin_ypos;

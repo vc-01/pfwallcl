@@ -30,10 +30,6 @@ public:
     static char const * const
         msg_clockspeed_normal;
     static char const * const
-        msg_anim_willstart;
-    static char const * const
-        msg_anim_willstop;
-    static char const * const
         msg_poweroff_delay_override_deact;
     static char const * const
         msg_poweroff_delay_1h;

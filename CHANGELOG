@@ -1,3 +1,7 @@
+pfwallcl-0.2.1 / 2023-02-11
+===========================
+ * Animation starting immediately after pressing 'a' key
+
 pfwallcl-0.2.0 / 2023-01-31
 ===========================
  * Introduce .INI file for user settings

@@ -10,7 +10,7 @@ _Note_: Specific Portfolio's BIOS calls are being used by the program, it won't 
 
 ## Installation
 
-The program size is *34KiB*. It can run from the RAM disk only without need for external memory card. Format the drive to at least *"40"*:
+The program size is *33KiB*. It can run from the RAM disk only without need for external memory card. Format the drive to at least *"40"*:
 
 `c>fdisk 40`
 

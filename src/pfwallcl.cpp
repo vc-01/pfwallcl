@@ -115,7 +115,7 @@ int main(int const argc, char * const * const argv)
         PFBios::show_message_earlystage("ERR: Ini file error(s).\r\n$");
         return EXIT_FAILURE;
     }
-    
+
     randomize();
 
     PFBios pfbios;
@@ -217,18 +217,13 @@ int main(int const argc, char * const * const argv)
             if (!internal_state.all_cylinders &&
                 !internal_state.animate_waitnextminute)
             {
-                if (clockspeed == PFBios::clockspeed_fast)
-                {
-                    clockspeed = PFBios::clockspeed_normal;
-                    set_clockspeed(pfbios, clockspeed);
-                }
-                internal_state.animate_waitnextminute = TRUE;
-                pfbios.show_message_box(PFBios::msg_anim_willstart);
+                internal_state.animate_prep = TRUE;
+                internal_state.all_cylinders = TRUE;
             }
             else
             {
-                internal_state.animate_prep = FALSE;
                 internal_state.animate_waitnextminute = FALSE;
+                internal_state.animate_prep = FALSE;
                 internal_state.all_cylinders = FALSE;
             }
             internal_state.refresh_screen = TRUE;
@@ -262,15 +257,6 @@ int main(int const argc, char * const * const argv)
             {
                 clockspeed = PFBios::clockspeed_fast;
                 set_clockspeed(pfbios, clockspeed);
-
-                if (internal_state.all_cylinders ||
-                    internal_state.animate_waitnextminute)
-                {
-                    pfbios.show_message_box(PFBios::msg_anim_willstop);
-                }
-                internal_state.animate_prep = FALSE;
-                internal_state.animate_waitnextminute = FALSE;
-                internal_state.all_cylinders = FALSE;
             }
             else if (clockspeed == PFBios::clockspeed_fast)
             {
@@ -342,14 +328,6 @@ int main(int const argc, char * const * const argv)
         if (! internal_state.force_poweroff_event)
         {
             timer.schedule_next_poweroff(inifile);
-        }
-        if (internal_state.refresh_screen &&
-            (internal_state.all_cylinders ||
-            internal_state.animate_waitnextminute))
-        {
-            internal_state.all_cylinders = FALSE;
-            internal_state.animate_waitnextminute = TRUE;
-            internal_state.animate_prep = TRUE;
         }
 
         // on timer interrupt
@@ -453,10 +431,12 @@ int main(int const argc, char * const * const argv)
                 graph.cls_withzigzag();
 #endif
                 internal_state.do_dgclock_refresh = TRUE;
+
                 if (internal_state.all_cylinders ||
                     internal_state.animate_waitnextminute)
                 {
                     internal_state.animate_prep = TRUE;
+                    internal_state.all_cylinders = TRUE;
                 }
             }
 
